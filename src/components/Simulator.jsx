@@ -1,0 +1,478 @@
+import { useRef, useEffect, useCallback, useState } from 'react';
+import { getWakuStyle, gaussianRandom } from '../utils/horseUtils';
+
+const W = 780, H = 420;
+const TCX = W / 2, TCY = H / 2 - 5;
+const TRX = W * 0.415, TRY = H * 0.365;
+const TW = 62;
+
+function trackPt(prog, lane = 0) {
+  const centerRx = TRX - TW / 2;
+  const centerRy = TRY - TW * 0.55;
+  const lw = TW / 5;
+  const rx = centerRx + lane * lw;
+  const ry = centerRy + lane * lw * 0.55;
+  const theta = Math.PI / 2 - prog * 2 * Math.PI;
+  return { x: TCX + rx * Math.cos(theta), y: TCY + ry * Math.sin(theta) };
+}
+
+// 脚質×フェーズ×ペースの3軸でスピード補正
+const STYLE_INIT = { front: 0.012, stalker: 0.005, mid: 0, closer: -0.005 };
+
+function styleMult(style, leaderProg, pace = 'mid') {
+  const early = leaderProg < 0.20;
+  const final = leaderProg > 0.72;
+
+  if (style === 'front') {
+    if (early) return 1.10;
+    if (final) return pace === 'high' ? 0.86 : pace === 'slow' ? 0.99 : 0.93;
+    return 0.99;
+  }
+  if (style === 'stalker') {
+    if (early) return 1.05;
+    if (final) return pace === 'high' ? 0.94 : pace === 'slow' ? 1.02 : 0.97;
+    return 1.00;
+  }
+  if (style === 'mid') {
+    if (early) return 0.96;
+    if (final) return pace === 'high' ? 1.07 : pace === 'slow' ? 1.02 : 1.05;
+    return 1.00;
+  }
+  if (style === 'closer') {
+    if (early) return 0.91;
+    if (final) return pace === 'high' ? 1.14 : pace === 'slow' ? 1.02 : 1.09;
+    return 0.97;
+  }
+  return 1;
+}
+
+function makeSimHorses(horses, forcedWinner, maxStr, minStr, aiAnalysis) {
+  const range = maxStr - minStr || 1;
+  const adjustMap = {};
+  (aiAnalysis?.key_horses || []).forEach((k) => {
+    adjustMap[String(k.umaban)] = k.adjustment;
+  });
+
+  return horses.map((h) => {
+    const norm = (h.strength - minStr) / range;
+    const lane = (parseInt(h.umaban) - 9.5) / 9.5 * 2.2;
+    const aiAdjust = adjustMap[String(h.umaban)] ?? 0;
+    const bSpeed = (0.148 + norm * 0.052) * (1 + aiAdjust);
+    const isForcedWinner = String(forcedWinner) && String(forcedWinner) === String(h.umaban);
+    const initProg = STYLE_INIT[h.style] ?? 0;
+    return {
+      ...h,
+      lane,
+      baseSpeed: isForcedWinner ? 0.215 : bSpeed,
+      speed: 0,
+      progress: initProg,
+      finished: false,
+      finishRank: null,
+      trail: [],
+    };
+  });
+}
+
+const PACE_LABEL = { high: 'ハイペース', mid: 'ミドルペース', slow: 'スローペース' };
+const PACE_COLOR = { high: '#F87171', mid: '#FBBF24', slow: '#86EFAC' };
+
+export default function Simulator({ horses, maxStr, minStr }) {
+  const cvRef = useRef(null);
+  const stateRef = useRef({ running: false, horses: [], finishCount: 0, lastTs: null, afId: null });
+  const [forcedWinner, setForcedWinner] = useState('');
+  const [status, setStatus] = useState('');
+  const [results, setResults] = useState([]);
+  const [started, setStarted] = useState(false);
+
+  // AI Analysis state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+  const [aiAnalysis, setAiAnalysis] = useState(null);
+
+  const drawTrack = useCallback((ctx) => {
+    ctx.clearRect(0, 0, W, H);
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#080e1a');
+    grad.addColorStop(1, '#0d1117');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    const ellipse = (cx, cy, rx, ry, fill, stroke, lw) => {
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
+    };
+
+    ellipse(TCX, TCY, TRX + 5, TRY + 5, '#5a3a15');
+    ellipse(TCX, TCY, TRX, TRY, '#2a6430');
+    ellipse(TCX, TCY, TRX - TW, TRY - TW * 0.55, '#1e5a28');
+    ellipse(TCX, TCY, TRX + 1, TRY + 1, null, 'rgba(255,255,255,.55)', 2);
+    ellipse(TCX, TCY, TRX - TW, TRY - TW * 0.55, null, 'rgba(255,255,255,.4)', 1.5);
+
+    const f1 = trackPt(0, -2.5), f2 = trackPt(0, 2.5);
+    ctx.beginPath();
+    ctx.moveTo(f1.x, f1.y);
+    ctx.lineTo(f2.x, f2.y);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('GOAL', TCX, TCY + TRY + 16);
+
+    ctx.fillStyle = 'rgba(255,215,0,.75)';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('宝塚記念 2026 GI', TCX, TCY - 4);
+    ctx.fillStyle = 'rgba(255,255,255,.4)';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('阪神競馬場 芝2200m 左回り', TCX, TCY + 12);
+
+    ctx.fillStyle = '#131325';
+    ctx.fillRect(TCX - 130, H - 26, 260, 26);
+    ctx.fillStyle = '#1a1a40';
+    for (let i = 0; i < 11; i++) ctx.fillRect(TCX - 124 + i * 23, H - 38, 17, 14);
+  }, []);
+
+  const drawHorses = useCallback((ctx, simHorses, inGate = false) => {
+    const sorted = [...simHorses].sort((a, b) => a.progress - b.progress);
+    sorted.forEach((h) => {
+      const prog = inGate ? 0 : Math.min(h.progress, 1.0);
+      const pt = trackPt(prog, h.lane);
+      const ws = getWakuStyle(h.waku);
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 13, 0, Math.PI * 2);
+      ctx.fillStyle = ws.bg;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.55)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = ws.fg;
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(h.umaban, pt.x, pt.y);
+    });
+    ctx.textBaseline = 'alphabetic';
+  }, []);
+
+  const drawRanking = useCallback((ctx, simHorses) => {
+    const sorted = [...simHorses].sort((a, b) => b.progress - a.progress);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.72)';
+    ctx.fillRect(7, 7, 145, 112);
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillStyle = 'rgba(255,215,0,.85)';
+    ctx.textAlign = 'left';
+    ctx.fillText('LIVE RANKING', 14, 24);
+    const rankC = ['#FFD700', '#C0C0C0', '#CD853F', '#ccc', '#aaa', '#888'];
+    sorted.slice(0, 6).forEach((h, i) => {
+      const y = 40 + i * 13;
+      const ws = getWakuStyle(h.waku);
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillStyle = rankC[i] || '#888';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${i + 1}位`, 13, y);
+      ctx.fillStyle = ws.bg;
+      ctx.fillRect(40, y - 10, 15, 12);
+      ctx.fillStyle = ws.fg;
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(h.umaban, 47, y);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ddd';
+      ctx.font = '10px sans-serif';
+      const name = h.horse_name.length > 6 ? h.horse_name.slice(0, 6) + '…' : h.horse_name;
+      ctx.fillText(name, 57, y);
+    });
+    ctx.restore();
+  }, []);
+
+  const initCanvas = useCallback(() => {
+    const cv = cvRef.current;
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const st = stateRef.current;
+    st.horses = makeSimHorses(horses, forcedWinner, maxStr, minStr, aiAnalysis);
+    drawTrack(ctx);
+    drawHorses(ctx, st.horses, true);
+  }, [horses, forcedWinner, maxStr, minStr, aiAnalysis, drawTrack, drawHorses]);
+
+  useEffect(() => { initCanvas(); }, [initCanvas]);
+
+  const reset = useCallback(() => {
+    const st = stateRef.current;
+    if (st.afId) { cancelAnimationFrame(st.afId); st.afId = null; }
+    st.running = false;
+    st.lastTs = null;
+    st.finishCount = 0;
+    setStatus('');
+    setResults([]);
+    setStarted(false);
+    initCanvas();
+  }, [initCanvas]);
+
+  const start = useCallback(() => {
+    const st = stateRef.current;
+    if (st.running) return;
+    st.running = true;
+    st.finishCount = 0;
+    st.lastTs = null;
+    setStarted(true);
+    setStatus('レース中...');
+    setResults([]);
+
+    const pace = aiAnalysis?.pace ?? 'mid';
+    st.horses = makeSimHorses(horses, forcedWinner, maxStr, minStr, aiAnalysis);
+    st.horses.forEach((h) => {
+      h.speed = h.baseSpeed + gaussianRandom() * 0.013;
+      if (String(forcedWinner) && String(forcedWinner) === String(h.umaban))
+        h.speed = 0.21 + Math.abs(gaussianRandom() * 0.007);
+      h.progress = STYLE_INIT[h.style] ?? 0;
+      h.finished = false;
+      h.trail = [];
+    });
+
+    const cv = cvRef.current;
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+
+    function frame(ts) {
+      if (!st.running) return;
+      if (!st.lastTs) st.lastTs = ts;
+      const dt = Math.min((ts - st.lastTs) / 1000, 0.05);
+      st.lastTs = ts;
+
+      const leaderProg = Math.max(...st.horses.map((h) => h.progress));
+
+      st.horses.forEach((h) => {
+        if (h.finished) return;
+        h.progress += h.speed * styleMult(h.style, leaderProg, pace) * (1 + gaussianRandom() * 0.008) * dt;
+        const pt = trackPt(Math.min(h.progress, 1), h.lane);
+        h.trail.push({ x: pt.x, y: pt.y });
+        if (h.trail.length > 9) h.trail.shift();
+        if (h.progress >= 1 && !h.finished) {
+          h.finished = true;
+          h.finishRank = ++st.finishCount;
+        }
+      });
+
+      drawTrack(ctx);
+      st.horses.forEach((h) => {
+        if (h.trail.length < 2) return;
+        const ws = getWakuStyle(h.waku);
+        ctx.beginPath();
+        ctx.moveTo(h.trail[0].x, h.trail[0].y);
+        h.trail.forEach((p, i) => { if (i) ctx.lineTo(p.x, p.y); });
+        ctx.strokeStyle = ws.bg + '50';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      });
+      drawHorses(ctx, st.horses, false);
+      drawRanking(ctx, st.horses);
+
+      if (st.finishCount >= st.horses.length) {
+        st.running = false;
+        const sorted = [...st.horses].sort((a, b) => (a.finishRank || 99) - (b.finishRank || 99));
+        setResults(sorted);
+        setStatus('レース終了');
+        setStarted(false);
+        return;
+      }
+      st.afId = requestAnimationFrame(frame);
+    }
+    st.afId = requestAnimationFrame(frame);
+  }, [horses, forcedWinner, maxStr, minStr, aiAnalysis, drawTrack, drawHorses, drawRanking]);
+
+  const fetchAiAnalysis = useCallback(async () => {
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const resp = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          horses: horses.map((h) => ({
+            umaban: h.umaban,
+            horse_name: h.horse_name,
+            barei: h.barei,
+            kinryo: h.kinryo,
+            jockey_name: h.jockey_name,
+            trainer_name: h.trainer_name,
+            style: h.style,
+            results: h.results,
+          })),
+          raceInfo: {
+            name: '宝塚記念',
+            venue: '阪神競馬場',
+            surface: '芝',
+            distance: 2200,
+            date: '2026年6月28日',
+          },
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      setAiAnalysis(data.analysis);
+    } catch (e) {
+      setAiError(e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [horses]);
+
+  const RANK_ICONS = ['🥇', '🥈', '🥉'];
+
+  return (
+    <div className="sim-section">
+      {/* AI 予想セクション */}
+      <div className="ctrl-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button className="btn-primary" onClick={fetchAiAnalysis} disabled={aiLoading}>
+            {aiLoading ? 'AI分析中...' : aiAnalysis ? 'AI予想を再取得' : 'AIにレース展開を予想させる'}
+          </button>
+          {aiAnalysis && (
+            <span
+              style={{
+                padding: '4px 12px',
+                borderRadius: 999,
+                background: PACE_COLOR[aiAnalysis.pace] + '33',
+                color: PACE_COLOR[aiAnalysis.pace],
+                fontWeight: 700,
+                fontSize: 13,
+              }}
+            >
+              想定ペース: {PACE_LABEL[aiAnalysis.pace]}
+            </span>
+          )}
+          {aiError && (
+            <span style={{ color: '#F87171', fontSize: 13 }}>エラー: {aiError}</span>
+          )}
+        </div>
+
+        {aiAnalysis && (
+          <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: 14, display: 'grid', gap: 10 }}>
+            <div>
+              <div className="section-label">ペース予想の根拠</div>
+              <div style={{ fontSize: 13 }}>{aiAnalysis.pace_reason}</div>
+            </div>
+            <div>
+              <div className="section-label">本命候補</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {aiAnalysis.favorites.map((u, i) => {
+                  const h = horses.find((x) => Number(x.umaban) === Number(u));
+                  if (!h) return null;
+                  const ws = getWakuStyle(h.waku);
+                  return (
+                    <span key={u} className="rcard" style={{ padding: '4px 10px' }}>
+                      <span style={{ color: '#FFD700', fontWeight: 700 }}>{i + 1}.</span>
+                      <span
+                        className="chip"
+                        style={{ background: ws.bg, color: ws.fg, width: 22, height: 22, fontSize: 11 }}
+                      >
+                        {h.umaban}
+                      </span>
+                      <span style={{ fontSize: 13 }}>{h.horse_name}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <div className="section-label">予想展開</div>
+              <div style={{ fontSize: 13, lineHeight: 1.6 }}>{aiAnalysis.development}</div>
+            </div>
+            <div>
+              <div className="section-label">注目馬の補正</div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                {aiAnalysis.key_horses.map((k) => {
+                  const h = horses.find((x) => Number(x.umaban) === Number(k.umaban));
+                  if (!h) return null;
+                  const ws = getWakuStyle(h.waku);
+                  const positive = k.adjustment >= 0;
+                  return (
+                    <div
+                      key={k.umaban}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 12,
+                        padding: '4px 0',
+                        borderBottom: '1px solid var(--border)',
+                      }}
+                    >
+                      <span
+                        className="chip"
+                        style={{ background: ws.bg, color: ws.fg, width: 24, height: 24, fontSize: 11, flexShrink: 0 }}
+                      >
+                        {k.umaban}
+                      </span>
+                      <span style={{ fontWeight: 600, minWidth: 110 }}>{h.horse_name}</span>
+                      <span
+                        style={{
+                          color: positive ? '#86EFAC' : '#F87171',
+                          fontWeight: 700,
+                          fontFamily: 'monospace',
+                          minWidth: 50,
+                        }}
+                      >
+                        {positive ? '+' : ''}{(k.adjustment * 100).toFixed(0)}%
+                      </span>
+                      <span style={{ color: 'var(--muted)', flex: 1 }}>{k.reason}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* シミュレーション操作 */}
+      <div className="ctrl-bar">
+        <label>
+          勝ち馬指定：
+          <select value={forcedWinner} onChange={(e) => setForcedWinner(e.target.value)}>
+            <option value="">指定なし（自然展開）</option>
+            {horses.map((h) => (
+              <option key={h.umaban} value={h.umaban}>
+                {h.umaban}番 {h.horse_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="btn-primary" onClick={start} disabled={started}>スタート</button>
+        <button className="btn-secondary" onClick={reset}>リセット</button>
+        {status && <span className="status-txt">{status}</span>}
+      </div>
+
+      <div className="canvas-wrap">
+        <canvas ref={cvRef} width={W} height={H} />
+      </div>
+
+      {results.length > 0 && (
+        <div className="result-list">
+          {results.map((h, i) => {
+            const ws = getWakuStyle(h.waku);
+            return (
+              <div className="rcard" key={h.umaban}>
+                <span className={`rank-num ${i < 3 ? `rk${i + 1}` : ''}`}>
+                  {i < 3 ? RANK_ICONS[i] : `${i + 1}位`}
+                </span>
+                <span className="chip" style={{ background: ws.bg, color: ws.fg }}>{h.umaban}</span>
+                <span style={{ fontWeight: i < 3 ? 700 : 400 }}>{h.horse_name}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
