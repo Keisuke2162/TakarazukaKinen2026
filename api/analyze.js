@@ -121,18 +121,19 @@ ${JSON.stringify(digest, null, 2)}
 
 JSONスキーマに従って厳密に回答してください。`;
 
-    const response = await client.messages.create({
+    // max_tokens を大きく取るので streaming 必須（SDK の長時間リクエストガード）
+    // finalMessage() で完全な Message オブジェクトを取得する
+    const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
-      // adaptive thinking が消費しても JSON 出力に十分な余裕を残す
       max_tokens: 32000,
       thinking: { type: 'adaptive' },
       output_config: {
         format: { type: 'json_schema', schema: RESPONSE_SCHEMA },
-        // 'high' だと thinking が暴走しがちなので medium まで下げる
         effort: 'medium',
       },
       messages: [{ role: 'user', content: prompt }],
     });
+    const response = await stream.finalMessage();
 
     // デバッグ用にレスポンス構造をログ
     const blockSummary = response.content.map((b) => ({
