@@ -1,5 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+// Vercel Serverless Function のタイムアウトを延長（adaptive thinking は時間がかかる）
+export const config = {
+  maxDuration: 60,
+};
+
 const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
@@ -118,21 +123,52 @@ JSONスキーマに従って厳密に回答してください。`;
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
+      // adaptive thinking が消費しても JSON 出力に十分な余裕を残す
+      max_tokens: 32000,
       thinking: { type: 'adaptive' },
       output_config: {
         format: { type: 'json_schema', schema: RESPONSE_SCHEMA },
-        effort: 'high',
+        // 'high' だと thinking が暴走しがちなので medium まで下げる
+        effort: 'medium',
       },
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const textBlock = response.content.find((b) => b.type === 'text');
+    // デバッグ用にレスポンス構造をログ
+    const blockSummary = response.content.map((b) => ({
+      type: b.type,
+      text_len: typeof b.text === 'string' ? b.text.length : undefined,
+      thinking_len: typeof b.thinking === 'string' ? b.thinking.length : undefined,
+    }));
+    console.log('stop_reason:', response.stop_reason, 'blocks:', JSON.stringify(blockSummary));
+
+    // text ブロックを探す（content 配列の中の `type === "text"`）
+    const textBlock = response.content.find((b) => b.type === 'text' && b.text);
     if (!textBlock) {
-      throw new Error('テキストブロックが返されませんでした');
+      return res.status(500).json({
+        error: `Claude のレスポンスに text ブロックが含まれていません`,
+        debug: {
+          stop_reason: response.stop_reason,
+          stop_sequence: response.stop_sequence,
+          blocks: blockSummary,
+          usage: response.usage,
+        },
+      });
     }
 
-    const analysis = JSON.parse(textBlock.text);
+    let analysis;
+    try {
+      analysis = JSON.parse(textBlock.text);
+    } catch (e) {
+      return res.status(500).json({
+        error: `JSON パースに失敗: ${e.message}`,
+        debug: {
+          stop_reason: response.stop_reason,
+          text_preview: textBlock.text.slice(0, 500),
+        },
+      });
+    }
+
     return res.status(200).json({
       analysis,
       usage: response.usage,
@@ -141,6 +177,7 @@ JSONスキーマに従って厳密に回答してください。`;
     console.error('Analysis error:', error);
     return res.status(500).json({
       error: error.message ?? 'Unknown error',
+      detail: error?.error?.error?.message,
     });
   }
 }

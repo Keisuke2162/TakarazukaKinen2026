@@ -433,7 +433,12 @@ export default function Simulator({ horses, maxStr, minStr }) {
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${resp.status}`);
+        const detail = err.debug
+          ? ` (stop_reason=${err.debug.stop_reason}, blocks=${JSON.stringify(err.debug.blocks)})`
+          : err.detail
+          ? ` (${err.detail})`
+          : '';
+        throw new Error((err.error || `HTTP ${resp.status}`) + detail);
       }
       const data = await resp.json();
       setAiAnalysis(data.analysis);
