@@ -2,18 +2,96 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import { getWakuStyle, gaussianRandom } from '../utils/horseUtils';
 
 const W = 780, H = 420;
-const TCX = W / 2, TCY = H / 2 - 5;
-const TRX = W * 0.415, TRY = H * 0.365;
-const TW = 62;
 
+// 阪神競馬場の形状（不等辺の楕円・右回り）
+// 西側（左）は尖り、東側（右）は丸く広い卵型
+const TR = {
+  xL: 120,     // 左ストレート x
+  xR: 580,     // 右ストレート x
+  yT: 95,      // 上ストレート y
+  yB: 295,     // 下ストレート y
+  rWx: 80,     // 西側カーブ x半径（小さく尖り気味）
+  rEx: 165,    // 東側カーブ x半径（広く丸い）
+};
+const TR_yMid = (TR.yB + TR.yT) / 2;
+const TR_rY = (TR.yB - TR.yT) / 2; // カーブの縦半径
+const TR_HALF_W = 28;              // コース半幅(px)
+const GOAL_X = TR.xL + (TR.xR - TR.xL) * 0.30; // ゴール線位置（下ストレートのやや左寄り）
+const LANE_PX = 4;                  // 馬番ごとの内外オフセット倍率
+
+// セグメント長（px、進捗距離の比例計算用）
+const L1 = GOAL_X - TR.xL;                          // 下ストレート: GOAL → 西カーブ入口（左へ）
+const L2 = Math.PI * (TR.rWx + TR_rY) / 2;          // 西半周（楕円弧近似）
+const L3 = TR.xR - TR.xL;                           // 上ストレート（右へ）
+const L4 = Math.PI * (TR.rEx + TR_rY) / 2;          // 東半周
+const L5 = TR.xR - GOAL_X;                          // 下ストレート: 東カーブ出口 → GOAL（左へ）
+const L_TOTAL = L1 + L2 + L3 + L4 + L5;
+
+// 右回り（時計回り）の単一周回コース上の位置を返す
 function trackPt(prog, lane = 0) {
-  const centerRx = TRX - TW / 2;
-  const centerRy = TRY - TW * 0.55;
-  const lw = TW / 5;
-  const rx = centerRx + lane * lw;
-  const ry = centerRy + lane * lw * 0.55;
-  const theta = Math.PI / 2 - prog * 2 * Math.PI;
-  return { x: TCX + rx * Math.cos(theta), y: TCY + ry * Math.sin(theta) };
+  let s = ((prog % 1) + 1) % 1 * L_TOTAL; // [0, L_TOTAL)
+  const off = lane * LANE_PX;
+
+  // 1) 下ストレート（GOAL → 西カーブ入口、左方向）
+  if (s < L1) {
+    const x = GOAL_X - s; // 左へ進む
+    // 法線方向（外側＝下方向）。内側のlaneは負＝yB上、外側は正＝yB下
+    return { x, y: TR.yB + off };
+  }
+  s -= L1;
+
+  // 2) 西半周（左へ膨らむ。下→左→上）
+  if (s < L2) {
+    const t = s / L2;
+    const ang = Math.PI / 2 + t * Math.PI; // 90°→270°（経由：180°＝最左）
+    const cosA = Math.cos(ang);
+    const sinA = Math.sin(ang);
+    const x = TR.xL + (TR.rWx + off) * cosA;
+    const y = TR_yMid + (TR_rY + off) * sinA;
+    return { x, y };
+  }
+  s -= L2;
+
+  // 3) 上ストレート（左 → 右、つまりバックストレッチ）
+  if (s < L3) {
+    const x = TR.xL + s;
+    // 法線（外側＝上方向、負側）
+    return { x, y: TR.yT - off };
+  }
+  s -= L3;
+
+  // 4) 東半周（右へ膨らむ。上→右→下）
+  if (s < L4) {
+    const t = s / L4;
+    const ang = -Math.PI / 2 + t * Math.PI; // -90°→90°（経由：0°＝最右）
+    const cosA = Math.cos(ang);
+    const sinA = Math.sin(ang);
+    const x = TR.xR + (TR.rEx + off) * cosA;
+    const y = TR_yMid + (TR_rY + off) * sinA;
+    return { x, y };
+  }
+  s -= L4;
+
+  // 5) 下ストレート（東カーブ出口 → GOAL、左方向）
+  const x = TR.xR - s;
+  return { x, y: TR.yB + off };
+}
+
+// コース外形をパスとして描画する（offsetはセンターラインからの外向き距離）
+function tracePath(ctx, offset) {
+  ctx.beginPath();
+  // 下ストレート（GOALの東側から右端へ）
+  ctx.moveTo(GOAL_X, TR.yB + offset);
+  ctx.lineTo(TR.xR, TR.yB + offset);
+  // 東カーブ（下→右→上、右に膨らむ）
+  ctx.ellipse(TR.xR, TR_yMid, TR.rEx + offset, TR_rY + offset, 0, Math.PI / 2, -Math.PI / 2, true);
+  // 上ストレート（右端から左端へ）
+  ctx.lineTo(TR.xL, TR.yT - offset);
+  // 西カーブ（上→左→下、左に膨らむ）
+  ctx.ellipse(TR.xL, TR_yMid, TR.rWx + offset, TR_rY + offset, 0, -Math.PI / 2, Math.PI / 2, true);
+  // 下ストレート左半分（GOALに戻る）
+  ctx.lineTo(GOAL_X, TR.yB + offset);
+  ctx.closePath();
 }
 
 // 脚質×フェーズ×ペースの3軸でスピード補正
@@ -101,43 +179,66 @@ export default function Simulator({ horses, maxStr, minStr }) {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
 
-    const ellipse = (cx, cy, rx, ry, fill, stroke, lw) => {
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1; ctx.stroke(); }
-    };
+    // 外側ダート
+    tracePath(ctx, TR_HALF_W + 5);
+    ctx.fillStyle = '#5a3a15';
+    ctx.fill();
 
-    ellipse(TCX, TCY, TRX + 5, TRY + 5, '#5a3a15');
-    ellipse(TCX, TCY, TRX, TRY, '#2a6430');
-    ellipse(TCX, TCY, TRX - TW, TRY - TW * 0.55, '#1e5a28');
-    ellipse(TCX, TCY, TRX + 1, TRY + 1, null, 'rgba(255,255,255,.55)', 2);
-    ellipse(TCX, TCY, TRX - TW, TRY - TW * 0.55, null, 'rgba(255,255,255,.4)', 1.5);
+    // 芝コース
+    tracePath(ctx, TR_HALF_W);
+    ctx.fillStyle = '#2a6430';
+    ctx.fill();
 
-    const f1 = trackPt(0, -2.5), f2 = trackPt(0, 2.5);
+    // 内側フィールド（埋芝）— 外側の塗りを上書きで「コース幅」を作る
+    tracePath(ctx, -TR_HALF_W);
+    ctx.fillStyle = '#1e5a28';
+    ctx.fill();
+
+    // 外ラチ
+    tracePath(ctx, TR_HALF_W + 1);
+    ctx.strokeStyle = 'rgba(255,255,255,.55)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 内ラチ
+    tracePath(ctx, -TR_HALF_W);
+    ctx.strokeStyle = 'rgba(255,255,255,.45)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // GOAL ライン
     ctx.beginPath();
-    ctx.moveTo(f1.x, f1.y);
-    ctx.lineTo(f2.x, f2.y);
+    ctx.moveTo(GOAL_X, TR.yB - TR_HALF_W);
+    ctx.lineTo(GOAL_X, TR.yB + TR_HALF_W);
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 3;
     ctx.stroke();
 
+    // GOAL ラベル
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('GOAL', TCX, TCY + TRY + 16);
+    ctx.fillText('GOAL', GOAL_X, TR.yB + TR_HALF_W + 14);
 
-    ctx.fillStyle = 'rgba(255,215,0,.75)';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillText('宝塚記念 2026 GI', TCX, TCY - 4);
-    ctx.fillStyle = 'rgba(255,255,255,.4)';
+    // 中央のレース名
+    ctx.fillStyle = 'rgba(255,215,0,.78)';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('宝塚記念 2026 GI', (TR.xL + TR.xR) / 2, TR_yMid - 4);
+    ctx.fillStyle = 'rgba(255,255,255,.45)';
     ctx.font = '11px sans-serif';
-    ctx.fillText('阪神競馬場 芝2200m 左回り', TCX, TCY + 12);
+    ctx.fillText('阪神競馬場 芝2200m 右回り', (TR.xL + TR.xR) / 2, TR_yMid + 14);
 
+    // 右回り表示（上ストレッチに矢印）
+    ctx.fillStyle = 'rgba(255,215,0,.85)';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('→ 右回り', TR.xR - 130, TR.yT - 8);
+
+    // スタンド
     ctx.fillStyle = '#131325';
-    ctx.fillRect(TCX - 130, H - 26, 260, 26);
+    ctx.fillRect(GOAL_X - 70, H - 22, 140, 22);
     ctx.fillStyle = '#1a1a40';
-    for (let i = 0; i < 11; i++) ctx.fillRect(TCX - 124 + i * 23, H - 38, 17, 14);
+    for (let i = 0; i < 6; i++) ctx.fillRect(GOAL_X - 64 + i * 22, H - 34, 16, 14);
   }, []);
 
   const drawHorses = useCallback((ctx, simHorses, inGate = false) => {
@@ -164,32 +265,35 @@ export default function Simulator({ horses, maxStr, minStr }) {
 
   const drawRanking = useCallback((ctx, simHorses) => {
     const sorted = [...simHorses].sort((a, b) => b.progress - a.progress);
+    // 右下（東カーブ外の空きスペース）に表示
+    const PX = W - 158;
+    const PY = H - 132;
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,.72)';
-    ctx.fillRect(7, 7, 145, 112);
+    ctx.fillRect(PX, PY, 150, 118);
     ctx.font = 'bold 10px sans-serif';
     ctx.fillStyle = 'rgba(255,215,0,.85)';
     ctx.textAlign = 'left';
-    ctx.fillText('LIVE RANKING', 14, 24);
+    ctx.fillText('LIVE RANKING', PX + 8, PY + 17);
     const rankC = ['#FFD700', '#C0C0C0', '#CD853F', '#ccc', '#aaa', '#888'];
     sorted.slice(0, 6).forEach((h, i) => {
-      const y = 40 + i * 13;
+      const y = PY + 33 + i * 13;
       const ws = getWakuStyle(h.waku);
       ctx.font = 'bold 10px sans-serif';
       ctx.fillStyle = rankC[i] || '#888';
       ctx.textAlign = 'left';
-      ctx.fillText(`${i + 1}位`, 13, y);
+      ctx.fillText(`${i + 1}位`, PX + 8, y);
       ctx.fillStyle = ws.bg;
-      ctx.fillRect(40, y - 10, 15, 12);
+      ctx.fillRect(PX + 33, y - 10, 15, 12);
       ctx.fillStyle = ws.fg;
       ctx.font = 'bold 9px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(h.umaban, 47, y);
+      ctx.fillText(h.umaban, PX + 40, y);
       ctx.textAlign = 'left';
       ctx.fillStyle = '#ddd';
       ctx.font = '10px sans-serif';
       const name = h.horse_name.length > 6 ? h.horse_name.slice(0, 6) + '…' : h.horse_name;
-      ctx.fillText(name, 57, y);
+      ctx.fillText(name, PX + 51, y);
     });
     ctx.restore();
   }, []);
