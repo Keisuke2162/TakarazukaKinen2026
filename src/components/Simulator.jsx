@@ -95,41 +95,66 @@ function tracePath(ctx, offset) {
 }
 
 // ─── レース展開モデル ─────────────────────────────────
-// 3フェーズ × 4脚質 × 3ペースの組み合わせで道中の挙動を決める
+// 競馬の実際の道中:
 //
-// 序盤（先頭が0-15%、ゲート〜400m）: ポジション争い。逃げは強くダッシュ、追い込みは大きく控える
-// 中盤（先頭が15-72%、 400m〜直線入口）: 落ち着いた展開。差は小さく維持
-// 直線（先頭が72%以降、ラスト600m）: ペースに応じてラストスパート
-//   - ハイペース: 逃げ・先行はバテて、差し・追い込みが大きく伸びる
-//   - スローペース: 逃げ残り。後方は届かない
-//   - ミドル: 各脚質それなりにチャンス
+// 序盤(ゲート〜400m, 先頭の0-15%): ポジション争い
+//   - 逃げ馬がハナを切りに行く、追い込み馬は最後方に下げる
+//   - ここで隊列が決まる
+//
+// 中盤(400m〜直線入口, 先頭の15-72%): 落ち着いた展開
+//   - 全馬が先頭のペースで道中を流し、隊列は維持される
+//   - 逃げ馬は先頭のままキープ、追い込み馬は後方のまま
+//   - 個別能力の差は出ず、エネルギー温存合戦
+//
+// 直線(残り600m, 先頭の72%以降): 決着
+//   - 各馬が末脚を使って勝負
+//   - ペース次第で結果が変わる
+//     - ハイペース: 前で潰れ、差し・追い込みが台頭
+//     - スローペース: 逃げ残り、後方は届かない
+//     - ミドル: 直線力勝負
 const PHASE_POSITIONING_END = 0.15;
 const PHASE_FINAL_START = 0.72;
 
+// 序盤: 個別能力 × 脚質によるポジション取り
 const POSITIONING_MULT = {
-  front:   1.20,  // 強い前出し
-  stalker: 1.08,
+  front:   1.22,  // 強く前へ
+  stalker: 1.10,
   mid:     0.93,
-  closer:  0.82,  // 大きく後ろから運ぶ
-};
-const SETTLED_MULT = {
-  front:   0.99,
-  stalker: 1.00,
-  mid:     1.00,
-  closer:  0.97,
-};
-const FINAL_MULT = {
-  // pace 別の最終局面ファクター
-  front:   { slow: 1.00, mid: 0.90, high: 0.78 },
-  stalker: { slow: 1.03, mid: 0.96, high: 0.88 },
-  mid:     { slow: 0.97, mid: 1.06, high: 1.12 },
-  closer:  { slow: 0.92, mid: 1.14, high: 1.24 },
+  closer:  0.80,  // 大きく後方へ
 };
 
-function styleMult(style, leaderProg, pace = 'mid') {
-  if (leaderProg < PHASE_POSITIONING_END) return POSITIONING_MULT[style] ?? 1;
-  if (leaderProg > PHASE_FINAL_START)     return FINAL_MULT[style]?.[pace] ?? 1;
-  return SETTLED_MULT[style] ?? 1;
+// 中盤: 全馬が先頭のペースに揃って道中を流す
+// 個別能力（h.speed）ではなく共通ペースを使うことで隊列を維持する
+const SETTLED_COMMON_PACE = {
+  slow: 0.092,
+  mid:  0.104,
+  high: 0.116,
+};
+const SETTLED_MULT = {
+  front:   1.005,  // 先頭で僅かにリード維持
+  stalker: 1.000,  // 直後で待機
+  mid:     0.998,  // 中団でキープ
+  closer:  0.995,  // 後方で末脚温存
+};
+
+// 直線: 個別能力 × 脚質 × ペース
+const FINAL_MULT = {
+  front:   { slow: 1.06, mid: 0.90, high: 0.72 },
+  stalker: { slow: 1.04, mid: 0.96, high: 0.86 },
+  mid:     { slow: 0.95, mid: 1.08, high: 1.16 },
+  closer:  { slow: 0.88, mid: 1.18, high: 1.30 },
+};
+
+// 各フェーズでの有効速度を計算
+function effectiveSpeed(horse, leaderProg, pace) {
+  if (leaderProg < PHASE_POSITIONING_END) {
+    return horse.speed * (POSITIONING_MULT[horse.style] ?? 1);
+  }
+  if (leaderProg > PHASE_FINAL_START) {
+    return horse.speed * (FINAL_MULT[horse.style]?.[pace] ?? 1);
+  }
+  // 中盤は共通ペース基準（個別能力には依存しない、隊列維持）
+  return (SETTLED_COMMON_PACE[pace] ?? 0.104) * (SETTLED_MULT[horse.style] ?? 1);
 }
 
 function currentPhase(leaderProg) {
@@ -409,9 +434,14 @@ export default function Simulator({ horses, maxStr, minStr }) {
 
       const leaderProg = Math.max(...st.horses.map((h) => h.progress));
 
+      // フェーズに応じて揺らぎを変える（中盤は控えめ、序盤・直線は活発）
+      const isSettled = leaderProg >= PHASE_POSITIONING_END && leaderProg <= PHASE_FINAL_START;
+      const noiseMag = isSettled ? 0.004 : 0.010;
+
       st.horses.forEach((h) => {
         if (h.finished) return;
-        h.progress += h.speed * styleMult(h.style, leaderProg, pace) * (1 + gaussianRandom() * 0.008) * dt;
+        const v = effectiveSpeed(h, leaderProg, pace);
+        h.progress += v * (1 + gaussianRandom() * noiseMag) * dt;
         const pt = trackPt(Math.min(h.progress, 1), h.lane);
         h.trail.push({ x: pt.x, y: pt.y });
         if (h.trail.length > 9) h.trail.shift();
