@@ -117,7 +117,7 @@ ${JSON.stringify(digest, null, 2)}
 JSONスキーマに従って厳密に回答してください。`;
 
     const response = await client.messages.create({
-      model: 'claude-opus-4-7',
+      model: 'claude-sonnet-4-6',
       max_tokens: 8000,
       thinking: { type: 'adaptive' },
       output_config: {
