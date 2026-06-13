@@ -94,35 +94,65 @@ function tracePath(ctx, offset) {
   ctx.closePath();
 }
 
-// 脚質×フェーズ×ペースの3軸でスピード補正
-const STYLE_INIT = { front: 0.012, stalker: 0.005, mid: 0, closer: -0.005 };
+// ─── レース展開モデル ─────────────────────────────────
+// 3フェーズ × 4脚質 × 3ペースの組み合わせで道中の挙動を決める
+//
+// 序盤（先頭が0-15%、ゲート〜400m）: ポジション争い。逃げは強くダッシュ、追い込みは大きく控える
+// 中盤（先頭が15-72%、 400m〜直線入口）: 落ち着いた展開。差は小さく維持
+// 直線（先頭が72%以降、ラスト600m）: ペースに応じてラストスパート
+//   - ハイペース: 逃げ・先行はバテて、差し・追い込みが大きく伸びる
+//   - スローペース: 逃げ残り。後方は届かない
+//   - ミドル: 各脚質それなりにチャンス
+const PHASE_POSITIONING_END = 0.15;
+const PHASE_FINAL_START = 0.72;
+
+const POSITIONING_MULT = {
+  front:   1.20,  // 強い前出し
+  stalker: 1.08,
+  mid:     0.93,
+  closer:  0.82,  // 大きく後ろから運ぶ
+};
+const SETTLED_MULT = {
+  front:   0.99,
+  stalker: 1.00,
+  mid:     1.00,
+  closer:  0.97,
+};
+const FINAL_MULT = {
+  // pace 別の最終局面ファクター
+  front:   { slow: 1.00, mid: 0.90, high: 0.78 },
+  stalker: { slow: 1.03, mid: 0.96, high: 0.88 },
+  mid:     { slow: 0.97, mid: 1.06, high: 1.12 },
+  closer:  { slow: 0.92, mid: 1.14, high: 1.24 },
+};
 
 function styleMult(style, leaderProg, pace = 'mid') {
-  const early = leaderProg < 0.20;
-  const final = leaderProg > 0.72;
-
-  if (style === 'front') {
-    if (early) return 1.10;
-    if (final) return pace === 'high' ? 0.86 : pace === 'slow' ? 0.99 : 0.93;
-    return 0.99;
-  }
-  if (style === 'stalker') {
-    if (early) return 1.05;
-    if (final) return pace === 'high' ? 0.94 : pace === 'slow' ? 1.02 : 0.97;
-    return 1.00;
-  }
-  if (style === 'mid') {
-    if (early) return 0.96;
-    if (final) return pace === 'high' ? 1.07 : pace === 'slow' ? 1.02 : 1.05;
-    return 1.00;
-  }
-  if (style === 'closer') {
-    if (early) return 0.91;
-    if (final) return pace === 'high' ? 1.14 : pace === 'slow' ? 1.02 : 1.09;
-    return 0.97;
-  }
-  return 1;
+  if (leaderProg < PHASE_POSITIONING_END) return POSITIONING_MULT[style] ?? 1;
+  if (leaderProg > PHASE_FINAL_START)     return FINAL_MULT[style]?.[pace] ?? 1;
+  return SETTLED_MULT[style] ?? 1;
 }
+
+function currentPhase(leaderProg) {
+  if (leaderProg < PHASE_POSITIONING_END) return { key: 'positioning', label: '序盤', desc: 'ポジション争い' };
+  if (leaderProg > PHASE_FINAL_START)     return { key: 'final',       label: '直線', desc: 'ラストスパート！' };
+  return { key: 'settled', label: '中盤', desc: '落ち着いた流れ' };
+}
+
+// 脚質構成から想定ペースを推定（ロジック予想用）
+//  - 逃げが多いとハイペース（主導権争い）
+//  - 逃げ1頭以下ならスロー（楽な逃げ）
+function predictPaceLogic(horseList) {
+  const fronts   = horseList.filter((h) => h.style === 'front').length;
+  const stalkers = horseList.filter((h) => h.style === 'stalker').length;
+  if (fronts >= 3) return 'high';
+  if (fronts <= 1) return 'slow';
+  if (fronts >= 2 && stalkers >= 5) return 'mid';
+  return 'mid';
+}
+
+// 各脚質のスタート時のポジション初期値（プログレス換算）
+//  逃げはスタートから0.025先行、追い込みは-0.012で後方へ
+const STYLE_INIT = { front: 0.020, stalker: 0.010, mid: 0, closer: -0.010 };
 
 function makeSimHorses(horses, forcedWinner, maxStr, minStr, aiAnalysis) {
   const range = maxStr - minStr || 1;
@@ -135,13 +165,14 @@ function makeSimHorses(horses, forcedWinner, maxStr, minStr, aiAnalysis) {
     const norm = (h.strength - minStr) / range;
     const lane = (parseInt(h.umaban) - 9.5) / 9.5 * 2.2;
     const aiAdjust = adjustMap[String(h.umaban)] ?? 0;
-    const bSpeed = (0.148 + norm * 0.052) * (1 + aiAdjust);
+    // ペース挙動とフェーズが見える速度に調整（ラップ ~12秒）
+    const bSpeed = (0.085 + norm * 0.038) * (1 + aiAdjust);
     const isForcedWinner = String(forcedWinner) && String(forcedWinner) === String(h.umaban);
     const initProg = STYLE_INIT[h.style] ?? 0;
     return {
       ...h,
       lane,
-      baseSpeed: isForcedWinner ? 0.215 : bSpeed,
+      baseSpeed: isForcedWinner ? 0.150 : bSpeed,
       speed: 0,
       progress: initProg,
       finished: false,
@@ -153,6 +184,7 @@ function makeSimHorses(horses, forcedWinner, maxStr, minStr, aiAnalysis) {
 
 const PACE_LABEL = { high: 'ハイペース', mid: 'ミドルペース', slow: 'スローペース' };
 const PACE_COLOR = { high: '#F87171', mid: '#FBBF24', slow: '#86EFAC' };
+const PHASE_COLOR = { positioning: '#60A5FA', settled: '#FBBF24', final: '#F87171' };
 
 export default function Simulator({ horses, maxStr, minStr }) {
   const cvRef = useRef(null);
@@ -171,7 +203,8 @@ export default function Simulator({ horses, maxStr, minStr }) {
   // レース完了済みフラグ（結果セクション表示用）
   const [raceCompleted, setRaceCompleted] = useState(false);
 
-  const drawTrack = useCallback((ctx) => {
+  // raceState = { leaderProg, pace, isAi } を渡すとレース中の表示が出る
+  const drawTrack = useCallback((ctx, raceState = null) => {
     ctx.clearRect(0, 0, W, H);
     const grad = ctx.createLinearGradient(0, 0, 0, H);
     grad.addColorStop(0, '#080e1a');
@@ -223,10 +256,23 @@ export default function Simulator({ horses, maxStr, minStr }) {
     // 中央のレース名
     ctx.fillStyle = 'rgba(255,215,0,.78)';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText('宝塚記念 2026 GI', (TR.xL + TR.xR) / 2, TR_yMid - 4);
+    ctx.textAlign = 'center';
+    ctx.fillText('宝塚記念 2026 GI', (TR.xL + TR.xR) / 2, TR_yMid - 16);
     ctx.fillStyle = 'rgba(255,255,255,.45)';
     ctx.font = '11px sans-serif';
-    ctx.fillText('阪神競馬場 芝2200m 右回り', (TR.xL + TR.xR) / 2, TR_yMid + 14);
+    ctx.fillText('阪神競馬場 芝2200m 右回り', (TR.xL + TR.xR) / 2, TR_yMid + 0);
+
+    // レース中のフェーズ・ペース表示（中央下部）
+    if (raceState) {
+      const phase = currentPhase(raceState.leaderProg);
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillStyle = PHASE_COLOR[phase.key];
+      ctx.fillText(`▼ ${phase.label}：${phase.desc} ▼`, (TR.xL + TR.xR) / 2, TR_yMid + 26);
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillStyle = PACE_COLOR[raceState.pace];
+      const paceTag = raceState.isAi ? '🤖 AI想定' : '🎲 ロジック想定';
+      ctx.fillText(`${paceTag}ペース: ${PACE_LABEL[raceState.pace]}`, (TR.xL + TR.xR) / 2, TR_yMid + 46);
+    }
 
     // 右回り表示（上ストレッチに矢印）
     ctx.fillStyle = 'rgba(255,215,0,.85)';
@@ -338,12 +384,14 @@ export default function Simulator({ horses, maxStr, minStr }) {
     setLastModeAi(!!analysisForSim);
     setRaceCompleted(false);
 
-    const pace = analysisForSim?.pace ?? 'mid';
+    // ロジックモードでも脚質構成からペースを推定する
+    const pace = analysisForSim?.pace ?? predictPaceLogic(horses);
+    st.pace = pace;
     st.horses = makeSimHorses(horses, forcedWinner, maxStr, minStr, analysisForSim);
     st.horses.forEach((h) => {
-      h.speed = h.baseSpeed + gaussianRandom() * 0.013;
+      h.speed = h.baseSpeed + gaussianRandom() * 0.008;
       if (String(forcedWinner) && String(forcedWinner) === String(h.umaban))
-        h.speed = 0.21 + Math.abs(gaussianRandom() * 0.007);
+        h.speed = 0.145 + Math.abs(gaussianRandom() * 0.005);
       h.progress = STYLE_INIT[h.style] ?? 0;
       h.finished = false;
       h.trail = [];
@@ -373,7 +421,7 @@ export default function Simulator({ horses, maxStr, minStr }) {
         }
       });
 
-      drawTrack(ctx);
+      drawTrack(ctx, { leaderProg, pace, isAi: !!analysisForSim });
       st.horses.forEach((h) => {
         if (h.trail.length < 2) return;
         const ws = getWakuStyle(h.waku);
