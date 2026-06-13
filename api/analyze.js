@@ -1,9 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 
-// Vercel Serverless Function のタイムアウトを延長（adaptive thinking は時間がかかる）
-export const config = {
-  maxDuration: 60,
-};
+// Vercel Serverless Function のタイムアウト（Hobby プランの上限 60秒）
+export const maxDuration = 60;
+export const config = { maxDuration: 60 };
 
 const RESPONSE_SCHEMA = {
   type: 'object',
@@ -121,15 +120,15 @@ ${JSON.stringify(digest, null, 2)}
 
 JSONスキーマに従って厳密に回答してください。`;
 
-    // max_tokens を大きく取るので streaming 必須（SDK の長時間リクエストガード）
-    // finalMessage() で完全な Message オブジェクトを取得する
+    // Vercel Hobby は 60秒タイムアウト。
+    // adaptive thinking + structured outputs はトータルで 60秒超えやすいので
+    // thinking を切って高速化する。JSON 出力だけなら 10-20 秒で帰る。
     const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
-      max_tokens: 32000,
-      thinking: { type: 'adaptive' },
+      max_tokens: 4096,
+      thinking: { type: 'disabled' },
       output_config: {
         format: { type: 'json_schema', schema: RESPONSE_SCHEMA },
-        effort: 'medium',
       },
       messages: [{ role: 'user', content: prompt }],
     });
