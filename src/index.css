@@ -88,3 +88,111 @@ select { background: var(--surface2); color: var(--text); border: 1px solid var(
 .mc-races-header { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border); }
 .mc-races-header h3 { font-size:15px; font-weight:700; }
 .section-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+
+/* ─── ページレイアウト ─── */
+.page { max-width: 1400px; margin: 0 auto; padding: 0; }
+.app-header.compact { padding: 12px 20px; }
+.app-header.compact .race-name { font-size: 20px; }
+.app-header.compact .race-meta { font-size: 11px; }
+
+.section-title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin: 0;
+  color: var(--text);
+}
+.uma-row { padding: 20px; padding-top: 0; }
+.uma-row .section-title { padding: 16px 20px; }
+.uma-row .uma-wrap { padding-top: 0; }
+.sim-row { padding: 16px 20px; }
+
+/* 左右2カラム */
+.sim-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .sim-layout { grid-template-columns: 1fr; }
+}
+
+.sim-left, .sim-right {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+/* 右カラム: 結果リスト */
+.results-placeholder {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  background: var(--surface2);
+  border-radius: 8px;
+}
+.ranking-list { display: flex; flex-direction: column; gap: 4px; }
+.ranking-row {
+  display: grid;
+  grid-template-columns: 44px 30px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface2);
+  border-radius: 6px;
+  border-left: 3px solid transparent;
+}
+.ranking-row.podium { background: linear-gradient(90deg, var(--surface2), var(--surface)); }
+.ranking-row.podium:nth-child(1) { border-left-color: #FFD700; }
+.ranking-row.podium:nth-child(2) { border-left-color: #C0C0C0; }
+.ranking-row.podium:nth-child(3) { border-left-color: #CD853F; }
+.ranking-row .rank-num { font-size: 14px; font-weight: 900; text-align: center; }
+.ranking-row .chip { width: 28px; height: 28px; font-size: 12px; }
+.ranking-name { font-weight: 600; font-size: 13px; }
+.ranking-row.podium .ranking-name { font-weight: 800; }
+.ranking-jockey { font-size: 11px; color: var(--muted); }
+
+/* AI 分析の折りたたみ */
+.ai-details {
+  margin-top: 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ai-details summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  list-style: none;
+}
+.ai-details summary::-webkit-details-marker { display: none; }
+.ai-details summary::before {
+  content: '▸';
+  margin-right: 8px;
+  transition: transform 0.2s;
+}
+.ai-details[open] summary::before { transform: rotate(90deg); }
+.ai-details-body {
+  padding: 12px 14px;
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+}

@@ -454,178 +454,198 @@ export default function Simulator({ horses, maxStr, minStr }) {
   const RANK_ICONS = ['🥇', '🥈', '🥉'];
 
   return (
-    <div className="sim-section">
-      {/* シミュレーション操作 */}
-      <div className="ctrl-bar">
-        <label>
-          勝ち馬指定：
-          <select value={forcedWinner} onChange={(e) => setForcedWinner(e.target.value)} disabled={started}>
-            <option value="">指定なし（自然展開）</option>
-            {horses.map((h) => (
-              <option key={h.umaban} value={h.umaban}>
-                {h.umaban}番 {h.horse_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="btn-secondary"
-          onClick={() => start(null)}
-          disabled={started || aiLoading}
-          style={{ borderColor: '#8b949e' }}
-        >
-          🎲 ロジックでシミュレート
-        </button>
-        <button
-          className="btn-primary"
-          onClick={startWithAi}
-          disabled={started || aiLoading}
-          style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
-        >
-          {aiLoading ? '🤖 AI分析中...（数十秒かかります）' : '🤖 AI予想でシミュレート'}
-        </button>
-        <button className="btn-secondary" onClick={reset} disabled={started}>リセット</button>
-        {status && <span className="status-txt">{status}</span>}
-        {aiError && <span style={{ color: '#F87171', fontSize: 13 }}>エラー: {aiError}</span>}
+    <div className="sim-layout">
+      {/* 左：コース図 + 操作 */}
+      <div className="sim-left">
+        <div className="panel-head">
+          <h2 className="section-title">🏇 コース図</h2>
+          {status && <span className="status-txt">{status}</span>}
+          {aiError && <span style={{ color: '#F87171', fontSize: 13 }}>エラー: {aiError}</span>}
+        </div>
+        <div className="canvas-wrap">
+          <canvas ref={cvRef} width={W} height={H} />
+        </div>
+        <div className="ctrl-bar" style={{ marginTop: 12, marginBottom: 0 }}>
+          <label>
+            勝ち馬指定：
+            <select value={forcedWinner} onChange={(e) => setForcedWinner(e.target.value)} disabled={started}>
+              <option value="">指定なし</option>
+              {horses.map((h) => (
+                <option key={h.umaban} value={h.umaban}>
+                  {h.umaban}番 {h.horse_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="btn-secondary"
+            onClick={() => start(null)}
+            disabled={started || aiLoading}
+            style={{ borderColor: '#8b949e' }}
+          >
+            🎲 ロジックでシミュレート
+          </button>
+          <button
+            className="btn-primary"
+            onClick={startWithAi}
+            disabled={started || aiLoading}
+            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
+          >
+            {aiLoading ? '🤖 AI分析中...' : '🤖 AI予想でシミュレート'}
+          </button>
+          <button className="btn-secondary" onClick={reset} disabled={started}>リセット</button>
+        </div>
       </div>
 
-      <div className="canvas-wrap">
-        <canvas ref={cvRef} width={W} height={H} />
-      </div>
+      {/* 右：シミュレーション結果 */}
+      <div className="sim-right">
+        <div className="panel-head">
+          <h2 className="section-title">🏁 シミュレーション結果</h2>
+          {raceCompleted && (
+            <span
+              style={{
+                fontSize: 11,
+                padding: '3px 10px',
+                borderRadius: 999,
+                background: lastModeAi ? 'rgba(139,92,246,.2)' : 'rgba(139,148,158,.2)',
+                color: lastModeAi ? '#a78bfa' : '#8b949e',
+                fontWeight: 600,
+              }}
+            >
+              {lastModeAi ? '🤖 AI予想' : '🎲 ロジック'}
+            </span>
+          )}
+        </div>
 
-      {/* レース完了後の結果＆分析 */}
-      {raceCompleted && results.length > 0 && (
-        <div style={{ display: 'grid', gap: 16, marginTop: 16 }}>
-          {/* 着順 */}
-          <div className="mc-box">
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              🏁 レース結果
+        {!raceCompleted && (
+          <div className="results-placeholder">
+            {aiLoading
+              ? '🤖 Claude にレース展開を分析させています...'
+              : started
+              ? 'レースをシミュレーション中です...'
+              : '左の「ロジック」または「AI予想」ボタンを押すとシミュレーションが始まります'}
+          </div>
+        )}
+
+        {raceCompleted && results.length > 0 && (
+          <div className="ranking-list">
+            {results.map((h, i) => {
+              const ws = getWakuStyle(h.waku);
+              const isPodium = i < 3;
+              return (
+                <div key={h.umaban} className={'ranking-row' + (isPodium ? ' podium' : '')}>
+                  <span className={`rank-num ${isPodium ? `rk${i + 1}` : ''}`}>
+                    {isPodium ? RANK_ICONS[i] : `${i + 1}位`}
+                  </span>
+                  <span className="chip" style={{ background: ws.bg, color: ws.fg }}>{h.umaban}</span>
+                  <span className="ranking-name">{h.horse_name}</span>
+                  <span className="ranking-jockey">{h.jockey_name}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* AI分析パネル（AIモード時のみ） */}
+        {raceCompleted && lastModeAi && aiAnalysis && (
+          <details className="ai-details" open>
+            <summary>
+              🤖 Claude の展開分析
               <span
                 style={{
-                  fontSize: 11,
-                  padding: '3px 10px',
+                  marginLeft: 8,
+                  padding: '2px 8px',
                   borderRadius: 999,
-                  background: lastModeAi ? 'rgba(139,92,246,.2)' : 'rgba(139,148,158,.2)',
-                  color: lastModeAi ? '#a78bfa' : '#8b949e',
-                  fontWeight: 600,
+                  background: PACE_COLOR[aiAnalysis.pace] + '33',
+                  color: PACE_COLOR[aiAnalysis.pace],
+                  fontWeight: 700,
+                  fontSize: 11,
                 }}
               >
-                {lastModeAi ? '🤖 AI予想モード' : '🎲 ロジックモード'}
+                {PACE_LABEL[aiAnalysis.pace]}
               </span>
-            </h3>
-            <div className="result-list" style={{ padding: 16 }}>
-              {results.map((h, i) => {
-                const ws = getWakuStyle(h.waku);
-                return (
-                  <div className="rcard" key={h.umaban}>
-                    <span className={`rank-num ${i < 3 ? `rk${i + 1}` : ''}`}>
-                      {i < 3 ? RANK_ICONS[i] : `${i + 1}位`}
-                    </span>
-                    <span className="chip" style={{ background: ws.bg, color: ws.fg }}>{h.umaban}</span>
-                    <span style={{ fontWeight: i < 3 ? 700 : 400 }}>{h.horse_name}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* AIモードのときのみ分析パネルを表示 */}
-          {lastModeAi && aiAnalysis && (
-            <div className="mc-box">
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                🤖 Claude による展開分析
-                <span
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: 999,
-                    background: PACE_COLOR[aiAnalysis.pace] + '33',
-                    color: PACE_COLOR[aiAnalysis.pace],
-                    fontWeight: 700,
-                    fontSize: 11,
-                  }}
-                >
-                  想定ペース: {PACE_LABEL[aiAnalysis.pace]}
-                </span>
-              </h3>
-              <div style={{ padding: 16, display: 'grid', gap: 14 }}>
-                <div>
-                  <div className="section-label">ペース予想の根拠</div>
-                  <div style={{ fontSize: 13, lineHeight: 1.6 }}>{aiAnalysis.pace_reason}</div>
-                </div>
-                <div>
-                  <div className="section-label">予想展開</div>
-                  <div style={{ fontSize: 13, lineHeight: 1.6 }}>{aiAnalysis.development}</div>
-                </div>
-                <div>
-                  <div className="section-label">Claude の本命候補</div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {aiAnalysis.favorites.map((u, i) => {
-                      const h = horses.find((x) => Number(x.umaban) === Number(u));
-                      if (!h) return null;
-                      const ws = getWakuStyle(h.waku);
-                      return (
-                        <span key={u} className="rcard" style={{ padding: '4px 10px' }}>
-                          <span style={{ color: '#FFD700', fontWeight: 700 }}>{i + 1}.</span>
-                          <span
-                            className="chip"
-                            style={{ background: ws.bg, color: ws.fg, width: 22, height: 22, fontSize: 11 }}
-                          >
-                            {h.umaban}
-                          </span>
-                          <span style={{ fontSize: 13 }}>{h.horse_name}</span>
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div>
-                  <div className="section-label">注目馬の補正（シミュレーションに反映済み）</div>
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    {aiAnalysis.key_horses.map((k) => {
-                      const h = horses.find((x) => Number(x.umaban) === Number(k.umaban));
-                      if (!h) return null;
-                      const ws = getWakuStyle(h.waku);
-                      const positive = k.adjustment >= 0;
-                      return (
-                        <div
-                          key={k.umaban}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            fontSize: 12,
-                            padding: '4px 0',
-                            borderBottom: '1px solid var(--border)',
-                          }}
+            </summary>
+            <div className="ai-details-body">
+              <div>
+                <div className="section-label">ペース予想の根拠</div>
+                <div style={{ fontSize: 12, lineHeight: 1.6 }}>{aiAnalysis.pace_reason}</div>
+              </div>
+              <div>
+                <div className="section-label">予想展開</div>
+                <div style={{ fontSize: 12, lineHeight: 1.6 }}>{aiAnalysis.development}</div>
+              </div>
+              <div>
+                <div className="section-label">本命候補</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {aiAnalysis.favorites.map((u, i) => {
+                    const h = horses.find((x) => Number(x.umaban) === Number(u));
+                    if (!h) return null;
+                    const ws = getWakuStyle(h.waku);
+                    return (
+                      <span key={u} className="rcard" style={{ padding: '3px 8px', fontSize: 12 }}>
+                        <span style={{ color: '#FFD700', fontWeight: 700 }}>{i + 1}.</span>
+                        <span
+                          className="chip"
+                          style={{ background: ws.bg, color: ws.fg, width: 20, height: 20, fontSize: 10 }}
                         >
-                          <span
-                            className="chip"
-                            style={{ background: ws.bg, color: ws.fg, width: 24, height: 24, fontSize: 11, flexShrink: 0 }}
-                          >
-                            {k.umaban}
-                          </span>
-                          <span style={{ fontWeight: 600, minWidth: 110 }}>{h.horse_name}</span>
-                          <span
-                            style={{
-                              color: positive ? '#86EFAC' : '#F87171',
-                              fontWeight: 700,
-                              fontFamily: 'monospace',
-                              minWidth: 50,
-                            }}
-                          >
-                            {positive ? '+' : ''}{(k.adjustment * 100).toFixed(0)}%
-                          </span>
-                          <span style={{ color: 'var(--muted)', flex: 1 }}>{k.reason}</span>
+                          {h.umaban}
+                        </span>
+                        <span style={{ fontSize: 11 }}>{h.horse_name}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <div className="section-label">注目馬の補正</div>
+                <div style={{ display: 'grid', gap: 4 }}>
+                  {aiAnalysis.key_horses.map((k) => {
+                    const h = horses.find((x) => Number(x.umaban) === Number(k.umaban));
+                    if (!h) return null;
+                    const ws = getWakuStyle(h.waku);
+                    const positive = k.adjustment >= 0;
+                    return (
+                      <div
+                        key={k.umaban}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 6,
+                          fontSize: 11,
+                          padding: '4px 0',
+                          borderBottom: '1px solid var(--border)',
+                        }}
+                      >
+                        <span
+                          className="chip"
+                          style={{ background: ws.bg, color: ws.fg, width: 22, height: 22, fontSize: 10, flexShrink: 0 }}
+                        >
+                          {k.umaban}
+                        </span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
+                            <span style={{ fontWeight: 600 }}>{h.horse_name}</span>
+                            <span
+                              style={{
+                                color: positive ? '#86EFAC' : '#F87171',
+                                fontWeight: 700,
+                                fontFamily: 'monospace',
+                              }}
+                            >
+                              {positive ? '+' : ''}{(k.adjustment * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          <div style={{ color: 'var(--muted)' }}>{k.reason}</div>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
-          )}
-        </div>
-      )}
+          </details>
+        )}
+      </div>
     </div>
   );
 }
