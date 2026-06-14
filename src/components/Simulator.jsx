@@ -107,11 +107,12 @@ const PHASE_POSITIONING_END = 0.15;
 const PHASE_FINAL_START = 0.72;
 
 // 序盤: 個別能力 × 脚質によるポジション取り
+// 序盤の差は控えめにして、過剰なリードを防ぐ
 const POSITIONING_MULT = {
-  front:   1.22,  // 強く前へ
-  stalker: 1.10,
-  mid:     0.93,
-  closer:  0.80,  // 大きく後方へ
+  front:   1.15,  // 前へ出る
+  stalker: 1.06,
+  mid:     0.95,
+  closer:  0.86,  // 後方へ
 };
 
 // 中盤: 全馬が先頭のペースに揃って道中を流す
@@ -122,18 +123,23 @@ const SETTLED_COMMON_PACE = {
   high: 0.116,
 };
 const SETTLED_MULT = {
-  front:   1.005,  // 先頭で僅かにリード維持
-  stalker: 1.000,  // 直後で待機
-  mid:     0.998,  // 中団でキープ
-  closer:  0.995,  // 後方で末脚温存
+  front:   1.008,  // 先頭でリード維持
+  stalker: 1.002,
+  mid:     0.998,
+  closer:  0.992,  // 後方で末脚温存
 };
 
 // 直線: 個別能力 × 脚質 × ペース
+//
+// スローペース: 逃げ残りが顕著（逃げ馬が大きく加速、追い込みは届かない）
+//   → 弱い逃げ馬でも強い差し馬を抑えられる
+// ミドル: バランス。能力差で勝負がつく
+// ハイ: 差し・追い込み有利だが、強い逃げ馬は粘る余地あり
 const FINAL_MULT = {
-  front:   { slow: 1.06, mid: 0.90, high: 0.72 },
-  stalker: { slow: 1.04, mid: 0.96, high: 0.86 },
-  mid:     { slow: 0.95, mid: 1.08, high: 1.16 },
-  closer:  { slow: 0.88, mid: 1.18, high: 1.30 },
+  front:   { slow: 1.20, mid: 0.96, high: 0.80 },
+  stalker: { slow: 1.10, mid: 1.00, high: 0.90 },
+  mid:     { slow: 0.93, mid: 1.04, high: 1.12 },
+  closer:  { slow: 0.78, mid: 1.10, high: 1.24 },
 };
 
 // 各フェーズでの有効速度を計算
@@ -155,14 +161,19 @@ function currentPhase(leaderProg) {
 }
 
 // 脚質構成から想定ペースを推定（ロジック予想用）
-//  - 逃げが多いとハイペース（主導権争い）
-//  - 逃げ1頭以下ならスロー（楽な逃げ）
+//  - 逃げが多いほどハイペースに振れる（主導権争い）
+//  - 逃げが少なくて先行も少なければ単騎逃げ→スロー
+//  - 結果に多様性を持たせるため、確率的に揺らぎを入れる
 function predictPaceLogic(horseList) {
   const fronts   = horseList.filter((h) => h.style === 'front').length;
   const stalkers = horseList.filter((h) => h.style === 'stalker').length;
-  if (fronts >= 3) return 'high';
-  if (fronts <= 1) return 'slow';
-  if (fronts >= 2 && stalkers >= 5) return 'mid';
+  // 強いハイペース判定
+  if (fronts >= 3) return Math.random() < 0.85 ? 'high' : 'mid';
+  // 単騎逃げまたは逃げ不在 → 基本はスロー
+  if (fronts <= 1) return Math.random() < 0.70 ? 'slow' : 'mid';
+  // 2頭逃げ: 先行が多いとペースが流れる
+  if (fronts === 2 && stalkers >= 5) return Math.random() < 0.55 ? 'mid' : 'high';
+  if (fronts === 2) return Math.random() < 0.55 ? 'mid' : 'slow';
   return 'mid';
 }
 
