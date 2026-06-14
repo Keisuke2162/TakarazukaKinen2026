@@ -294,3 +294,54 @@ select { background: var(--surface2); color: var(--text); border: 1px solid var(
   flex: 1;
   background: linear-gradient(135deg, #10b981, #059669);
 }
+
+/* ─── 印（馬柱左端）─── */
+.mark-cell-td { padding: 6px 4px !important; vertical-align: middle; }
+.mark-cell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  background: var(--surface2);
+  user-select: none;
+}
+.mark-cell:hover { background: var(--border); }
+.mark-symbol {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+.mark-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  margin-top: 4px;
+}
+.mark-option {
+  background: var(--surface2);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mark-option:hover { background: var(--border); }
+.mark-option.selected { border-color: #FFD700; background: var(--border); }
