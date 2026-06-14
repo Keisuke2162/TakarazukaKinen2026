@@ -666,16 +666,13 @@ export default function Simulator({ horses, maxStr, minStr }) {
         {/* レース結果 */}
         {raceCompleted && results.length > 0 && (
           <div className="results-section">
-            <h3 className="subhead">🏁 着順</h3>
+            <h3 className="subhead">着順</h3>
             <div className="ranking-list">
               {results.map((h, i) => {
                 const ws = getWakuStyle(h.waku);
-                const isPodium = i < 3;
                 return (
-                  <div key={h.umaban} className={'ranking-row' + (isPodium ? ' podium' : '')}>
-                    <span className={`rank-num ${isPodium ? `rk${i + 1}` : ''}`}>
-                      {isPodium ? RANK_ICONS[i] : `${i + 1}位`}
-                    </span>
+                  <div key={h.umaban} className="ranking-row">
+                    <span className="rank-num">{i + 1}着</span>
                     <span className="chip" style={{ background: ws.bg, color: ws.fg }}>{h.umaban}</span>
                     <span className="ranking-name">{h.horse_name}</span>
                     <span className="ranking-jockey">{h.jockey_name}</span>

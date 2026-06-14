@@ -145,25 +145,25 @@ select { background: var(--surface2); color: var(--text); border: 1px solid var(
   background: var(--surface2);
   border-radius: 8px;
 }
-.ranking-list { display: flex; flex-direction: column; gap: 4px; }
+.ranking-list { display: flex; flex-direction: column; gap: 0; }
 .ranking-row {
   display: grid;
-  grid-template-columns: 44px 30px 1fr auto;
+  grid-template-columns: 40px 26px 1fr auto;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  background: var(--surface2);
-  border-radius: 6px;
-  border-left: 3px solid transparent;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
 }
-.ranking-row.podium { background: linear-gradient(90deg, var(--surface2), var(--surface)); }
-.ranking-row.podium:nth-child(1) { border-left-color: #FFD700; }
-.ranking-row.podium:nth-child(2) { border-left-color: #C0C0C0; }
-.ranking-row.podium:nth-child(3) { border-left-color: #CD853F; }
-.ranking-row .rank-num { font-size: 14px; font-weight: 900; text-align: center; }
-.ranking-row .chip { width: 28px; height: 28px; font-size: 12px; }
-.ranking-name { font-weight: 600; font-size: 13px; }
-.ranking-row.podium .ranking-name { font-weight: 800; }
+.ranking-row:last-child { border-bottom: none; }
+.ranking-row .rank-num {
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ranking-row .chip { width: 22px; height: 22px; font-size: 11px; }
+.ranking-name { font-weight: 500; font-size: 13px; }
 .ranking-jockey { font-size: 11px; color: var(--muted); }
 
 /* AI 分析の折りたたみ */
@@ -198,7 +198,16 @@ select { background: var(--surface2); color: var(--text); border: 1px solid var(
 }
 
 /* ─── AI予想セクション & 履歴 ─── */
-.subhead { font-size: 13px; font-weight: 700; color: var(--text); margin: 0 0 8px 0; }
+.subhead {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 4px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
 
 .running-status {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -213,7 +222,7 @@ select { background: var(--surface2); color: var(--text); border: 1px solid var(
   50% { transform: translateY(-8px); }
 }
 
-.results-section { margin-bottom: 16px; }
+.results-section { margin-bottom: 12px; }
 
 .ai-section {
   background: var(--surface2);
