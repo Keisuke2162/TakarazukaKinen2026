@@ -196,3 +196,92 @@ select { background: var(--surface2); color: var(--text); border: 1px solid var(
   gap: 12px;
   border-top: 1px solid var(--border);
 }
+
+/* ─── AI予想セクション & 履歴 ─── */
+.subhead { font-size: 13px; font-weight: 700; color: var(--text); margin: 0 0 8px 0; }
+
+.running-status {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 24px; background: var(--surface2); border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.big-loader {
+  font-size: 36px; animation: bounce 1.2s ease-in-out infinite;
+}
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.results-section { margin-bottom: 16px; }
+
+.ai-section {
+  background: var(--surface2);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+}
+.ai-loading {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 20px; color: var(--muted); font-size: 13px;
+}
+.ai-loaded { display: grid; gap: 10px; }
+.ai-summary {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-bottom: 4px;
+}
+.play-row { display: flex; gap: 8px; }
+.play-btn {
+  flex: 1;
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  font-size: 14px;
+  padding: 10px 16px;
+}
+.play-btn:hover { background: linear-gradient(135deg, #059669, #047857) !important; }
+
+/* 履歴パネル */
+.history-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.history-panel summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  list-style: none;
+}
+.history-panel summary::-webkit-details-marker { display: none; }
+.history-panel summary::before {
+  content: '▸';
+  margin-right: 8px;
+  transition: transform 0.2s;
+}
+.history-panel[open] summary::before { transform: rotate(90deg); }
+.history-list {
+  padding: 10px 14px;
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+}
+.history-item {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid transparent;
+  display: grid;
+  gap: 4px;
+}
+.history-item.active { border-left-color: #8b5cf6; background: rgba(139, 92, 246, 0.08); }
+.history-meta { display: flex; align-items: center; gap: 6px; }
+.history-actions { display: flex; gap: 6px; margin-top: 4px; }
+.history-actions .btn-primary {
+  flex: 1;
+  background: linear-gradient(135deg, #10b981, #059669);
+}

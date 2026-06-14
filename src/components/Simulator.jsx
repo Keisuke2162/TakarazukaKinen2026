@@ -220,6 +220,14 @@ export default function Simulator({ horses, maxStr, minStr }) {
   const [lastModeAi, setLastModeAi] = useState(false);
   // レース完了済みフラグ（結果セクション表示用）
   const [raceCompleted, setRaceCompleted] = useState(false);
+  // AI 予想履歴（localStorage 永続化）
+  const [aiHistory, setAiHistory] = useState(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem('takarazuka-ai-history');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
 
   // コース画像のプリロード
   useEffect(() => {
@@ -335,6 +343,11 @@ export default function Simulator({ horses, maxStr, minStr }) {
     if (!cv) return;
     const ctx = cv.getContext('2d');
     const st = stateRef.current;
+    // レース実行中は st.horses を上書きしない（再生中の馬の speed=0 になるバグの修正）
+    if (st.running) {
+      drawTrack(ctx);
+      return;
+    }
     st.horses = makeSimHorses(horses, forcedWinner, maxStr, minStr, aiAnalysis);
     drawTrack(ctx);
     drawHorses(ctx, st.horses, true);
@@ -441,9 +454,35 @@ export default function Simulator({ horses, maxStr, minStr }) {
     st.afId = requestAnimationFrame(frame);
   }, [horses, forcedWinner, maxStr, minStr, drawTrack, drawHorses, drawRanking]);
 
-  // AI予想を取得（既に取得済みならスキップ）
-  const fetchAiIfNeeded = useCallback(async () => {
-    if (aiAnalysis) return aiAnalysis;
+  // 履歴に保存（最新10件）
+  const saveToHistory = useCallback((analysis) => {
+    const entry = {
+      id: Date.now().toString(),
+      timestamp: new Date().toISOString(),
+      analysis,
+    };
+    setAiHistory((prev) => {
+      const next = [entry, ...prev].slice(0, 10);
+      try { window.localStorage.setItem('takarazuka-ai-history', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const deleteHistory = useCallback((id) => {
+    setAiHistory((prev) => {
+      const next = prev.filter((it) => it.id !== id);
+      try { window.localStorage.setItem('takarazuka-ai-history', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setAiHistory([]);
+    try { window.localStorage.removeItem('takarazuka-ai-history'); } catch {}
+  }, []);
+
+  // 新しい AI 予想を取得（必ず履歴に追加）
+  const fetchAi = useCallback(async () => {
     setAiLoading(true);
     setAiError(null);
     try {
@@ -481,6 +520,7 @@ export default function Simulator({ horses, maxStr, minStr }) {
       }
       const data = await resp.json();
       setAiAnalysis(data.analysis);
+      saveToHistory(data.analysis);
       return data.analysis;
     } catch (e) {
       setAiError(e.message);
@@ -488,14 +528,70 @@ export default function Simulator({ horses, maxStr, minStr }) {
     } finally {
       setAiLoading(false);
     }
-  }, [aiAnalysis, horses]);
+  }, [horses, saveToHistory]);
 
-  const startWithAi = useCallback(async () => {
-    const analysis = await fetchAiIfNeeded();
-    if (analysis) start(analysis);
-  }, [fetchAiIfNeeded, start]);
+  // 履歴から再生（リソースを消費せず、その分析でアニメーションを実行）
+  const playFromHistory = useCallback((item) => {
+    setAiAnalysis(item.analysis);
+    start(item.analysis);
+  }, [start]);
 
   const RANK_ICONS = ['🥇', '🥈', '🥉'];
+
+  const renderAnalysisDetails = (a) => (
+    <div className="ai-details-body">
+      <div>
+        <div className="section-label">ペース予想の根拠</div>
+        <div style={{ fontSize: 12, lineHeight: 1.6 }}>{a.pace_reason}</div>
+      </div>
+      <div>
+        <div className="section-label">予想展開</div>
+        <div style={{ fontSize: 12, lineHeight: 1.6 }}>{a.development}</div>
+      </div>
+      <div>
+        <div className="section-label">本命候補</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {a.favorites.map((u, i) => {
+            const h = horses.find((x) => Number(x.umaban) === Number(u));
+            if (!h) return null;
+            const ws = getWakuStyle(h.waku);
+            return (
+              <span key={u} className="rcard" style={{ padding: '3px 8px', fontSize: 12 }}>
+                <span style={{ color: '#FFD700', fontWeight: 700 }}>{i + 1}.</span>
+                <span className="chip" style={{ background: ws.bg, color: ws.fg, width: 20, height: 20, fontSize: 10 }}>{h.umaban}</span>
+                <span style={{ fontSize: 11 }}>{h.horse_name}</span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <div>
+        <div className="section-label">注目馬の補正</div>
+        <div style={{ display: 'grid', gap: 4 }}>
+          {a.key_horses.map((k) => {
+            const h = horses.find((x) => Number(x.umaban) === Number(k.umaban));
+            if (!h) return null;
+            const ws = getWakuStyle(h.waku);
+            const positive = k.adjustment >= 0;
+            return (
+              <div key={k.umaban} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 11, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                <span className="chip" style={{ background: ws.bg, color: ws.fg, width: 22, height: 22, fontSize: 10, flexShrink: 0 }}>{k.umaban}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
+                    <span style={{ fontWeight: 600 }}>{h.horse_name}</span>
+                    <span style={{ color: positive ? '#86EFAC' : '#F87171', fontWeight: 700, fontFamily: 'monospace' }}>
+                      {positive ? '+' : ''}{(k.adjustment * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                  <div style={{ color: 'var(--muted)' }}>{k.reason}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="sim-layout">
@@ -529,165 +625,208 @@ export default function Simulator({ horses, maxStr, minStr }) {
           >
             🎲 ロジックでシミュレート
           </button>
-          <button
-            className="btn-primary"
-            onClick={startWithAi}
-            disabled={started || aiLoading}
-            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
-          >
-            {aiLoading ? '🤖 AI分析中...' : '🤖 AI予想でシミュレート'}
-          </button>
           <button className="btn-secondary" onClick={reset} disabled={started}>リセット</button>
         </div>
       </div>
 
-      {/* 右：シミュレーション結果 */}
+      {/* 右：シミュレーション結果 + AI予想 + 履歴 */}
       <div className="sim-right">
         <div className="panel-head">
-          <h2 className="section-title">🏁 シミュレーション結果</h2>
+          <h2 className="section-title">🤖 AI予想 & 結果</h2>
           {raceCompleted && (
-            <span
-              style={{
-                fontSize: 11,
-                padding: '3px 10px',
-                borderRadius: 999,
-                background: lastModeAi ? 'rgba(139,92,246,.2)' : 'rgba(139,148,158,.2)',
-                color: lastModeAi ? '#a78bfa' : '#8b949e',
-                fontWeight: 600,
-              }}
-            >
+            <span style={{
+              fontSize: 11, padding: '3px 10px', borderRadius: 999,
+              background: lastModeAi ? 'rgba(139,92,246,.2)' : 'rgba(139,148,158,.2)',
+              color: lastModeAi ? '#a78bfa' : '#8b949e', fontWeight: 600,
+            }}>
               {lastModeAi ? '🤖 AI予想' : '🎲 ロジック'}
             </span>
           )}
         </div>
 
-        {!raceCompleted && (
-          <div className="results-placeholder">
-            {aiLoading
-              ? '🤖 Claude にレース展開を分析させています...'
-              : started
-              ? 'レースをシミュレーション中です...'
-              : '左の「ロジック」または「AI予想」ボタンを押すとシミュレーションが始まります'}
+        {/* レース中表示 */}
+        {started && (
+          <div className="running-status">
+            <div className="big-loader">🏇</div>
+            <div style={{ fontWeight: 600 }}>{status}</div>
           </div>
         )}
 
+        {/* レース結果 */}
         {raceCompleted && results.length > 0 && (
-          <div className="ranking-list">
-            {results.map((h, i) => {
-              const ws = getWakuStyle(h.waku);
-              const isPodium = i < 3;
-              return (
-                <div key={h.umaban} className={'ranking-row' + (isPodium ? ' podium' : '')}>
-                  <span className={`rank-num ${isPodium ? `rk${i + 1}` : ''}`}>
-                    {isPodium ? RANK_ICONS[i] : `${i + 1}位`}
-                  </span>
-                  <span className="chip" style={{ background: ws.bg, color: ws.fg }}>{h.umaban}</span>
-                  <span className="ranking-name">{h.horse_name}</span>
-                  <span className="ranking-jockey">{h.jockey_name}</span>
-                </div>
-              );
-            })}
+          <div className="results-section">
+            <h3 className="subhead">🏁 着順</h3>
+            <div className="ranking-list">
+              {results.map((h, i) => {
+                const ws = getWakuStyle(h.waku);
+                const isPodium = i < 3;
+                return (
+                  <div key={h.umaban} className={'ranking-row' + (isPodium ? ' podium' : '')}>
+                    <span className={`rank-num ${isPodium ? `rk${i + 1}` : ''}`}>
+                      {isPodium ? RANK_ICONS[i] : `${i + 1}位`}
+                    </span>
+                    <span className="chip" style={{ background: ws.bg, color: ws.fg }}>{h.umaban}</span>
+                    <span className="ranking-name">{h.horse_name}</span>
+                    <span className="ranking-jockey">{h.jockey_name}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
-        {/* AI分析パネル（AIモード時のみ） */}
-        {raceCompleted && lastModeAi && aiAnalysis && (
-          <details className="ai-details" open>
-            <summary>
-              🤖 Claude の展開分析
-              <span
-                style={{
-                  marginLeft: 8,
-                  padding: '2px 8px',
-                  borderRadius: 999,
-                  background: PACE_COLOR[aiAnalysis.pace] + '33',
-                  color: PACE_COLOR[aiAnalysis.pace],
-                  fontWeight: 700,
-                  fontSize: 11,
-                }}
+        {/* AI 予想セクション（レース中以外） */}
+        {!started && (
+          <div className="ai-section">
+            {!aiAnalysis && !aiLoading && (
+              <button
+                className="btn-primary"
+                onClick={fetchAi}
+                style={{ width: '100%', padding: '12px', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
               >
-                {PACE_LABEL[aiAnalysis.pace]}
-              </span>
-            </summary>
-            <div className="ai-details-body">
-              <div>
-                <div className="section-label">ペース予想の根拠</div>
-                <div style={{ fontSize: 12, lineHeight: 1.6 }}>{aiAnalysis.pace_reason}</div>
+                🤖 AI予想を取得
+                <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 4 }}>
+                  Claude にレース展開を分析させます
+                </div>
+              </button>
+            )}
+
+            {aiLoading && (
+              <div className="ai-loading">
+                <div className="big-loader">🤖</div>
+                <div>Claude が分析中... (10〜20秒)</div>
               </div>
-              <div>
-                <div className="section-label">予想展開</div>
-                <div style={{ fontSize: 12, lineHeight: 1.6 }}>{aiAnalysis.development}</div>
-              </div>
-              <div>
-                <div className="section-label">本命候補</div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {aiAnalysis.favorites.map((u, i) => {
+            )}
+
+            {aiAnalysis && (
+              <div className="ai-loaded">
+                <div className="ai-summary">
+                  <span style={{
+                    padding: '4px 10px', borderRadius: 999,
+                    background: PACE_COLOR[aiAnalysis.pace] + '33',
+                    color: PACE_COLOR[aiAnalysis.pace], fontWeight: 700, fontSize: 12,
+                  }}>
+                    {PACE_LABEL[aiAnalysis.pace]}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>本命:</span>
+                  {aiAnalysis.favorites.slice(0, 3).map((u, i) => {
                     const h = horses.find((x) => Number(x.umaban) === Number(u));
                     if (!h) return null;
                     const ws = getWakuStyle(h.waku);
                     return (
-                      <span key={u} className="rcard" style={{ padding: '3px 8px', fontSize: 12 }}>
-                        <span style={{ color: '#FFD700', fontWeight: 700 }}>{i + 1}.</span>
-                        <span
-                          className="chip"
-                          style={{ background: ws.bg, color: ws.fg, width: 20, height: 20, fontSize: 10 }}
-                        >
-                          {h.umaban}
-                        </span>
-                        <span style={{ fontSize: 11 }}>{h.horse_name}</span>
+                      <span key={u} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ color: '#FFD700', fontSize: 11, fontWeight: 700 }}>{i + 1}.</span>
+                        <span className="chip" style={{ background: ws.bg, color: ws.fg, width: 22, height: 22, fontSize: 11 }}>{h.umaban}</span>
                       </span>
                     );
                   })}
                 </div>
-              </div>
-              <div>
-                <div className="section-label">注目馬の補正</div>
-                <div style={{ display: 'grid', gap: 4 }}>
-                  {aiAnalysis.key_horses.map((k) => {
-                    const h = horses.find((x) => Number(x.umaban) === Number(k.umaban));
-                    if (!h) return null;
-                    const ws = getWakuStyle(h.waku);
-                    const positive = k.adjustment >= 0;
-                    return (
-                      <div
-                        key={k.umaban}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: 6,
-                          fontSize: 11,
-                          padding: '4px 0',
-                          borderBottom: '1px solid var(--border)',
-                        }}
-                      >
-                        <span
-                          className="chip"
-                          style={{ background: ws.bg, color: ws.fg, width: 22, height: 22, fontSize: 10, flexShrink: 0 }}
-                        >
-                          {k.umaban}
-                        </span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
-                            <span style={{ fontWeight: 600 }}>{h.horse_name}</span>
-                            <span
-                              style={{
-                                color: positive ? '#86EFAC' : '#F87171',
-                                fontWeight: 700,
-                                fontFamily: 'monospace',
-                              }}
-                            >
-                              {positive ? '+' : ''}{(k.adjustment * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                          <div style={{ color: 'var(--muted)' }}>{k.reason}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
+
+                <div className="play-row">
+                  <button
+                    onClick={() => start(aiAnalysis)}
+                    className="btn-primary play-btn"
+                    disabled={aiLoading}
+                  >
+                    ▶ {raceCompleted && lastModeAi ? 'もう一度再生' : 'このAI予想で再生'}
+                  </button>
+                  <button
+                    onClick={fetchAi}
+                    className="btn-secondary"
+                    disabled={aiLoading}
+                    title="新しい AI 予想を取得（API リソースを消費）"
+                  >
+                    🔄 新しい予想
+                  </button>
                 </div>
+
+                <details className="ai-details" open={!raceCompleted}>
+                  <summary>
+                    🤖 Claude の分析詳細
+                  </summary>
+                  {renderAnalysisDetails(aiAnalysis)}
+                </details>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* 履歴 */}
+        {!started && aiHistory.length > 0 && (
+          <details className="history-panel" open={!aiAnalysis}>
+            <summary>
+              📜 AI予想履歴 ({aiHistory.length}件)
+              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--muted)', fontWeight: 400 }}>
+                ワンタップで再生
+              </span>
+            </summary>
+            <div className="history-list">
+              {aiHistory.map((item) => {
+                const a = item.analysis;
+                const date = new Date(item.timestamp);
+                const ds = date.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+                const isCurrent = aiAnalysis && aiAnalysis === a;
+                return (
+                  <div key={item.id} className={'history-item' + (isCurrent ? ' active' : '')}>
+                    <div className="history-meta">
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>{ds}</span>
+                      <span style={{
+                        padding: '1px 6px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                        background: PACE_COLOR[a.pace] + '33', color: PACE_COLOR[a.pace],
+                      }}>
+                        {PACE_LABEL[a.pace]}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
+                      {a.favorites.slice(0, 3).map((u, i) => {
+                        const h = horses.find((x) => Number(x.umaban) === Number(u));
+                        if (!h) return null;
+                        const ws = getWakuStyle(h.waku);
+                        return (
+                          <span key={u} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <span style={{ fontSize: 9, color: '#FFD700' }}>{i + 1}</span>
+                            <span className="chip" style={{ background: ws.bg, color: ws.fg, width: 18, height: 18, fontSize: 9 }}>{h.umaban}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="history-actions">
+                      <button
+                        onClick={() => playFromHistory(item)}
+                        className="btn-primary"
+                        style={{ padding: '4px 12px', fontSize: 11 }}
+                      >
+                        ▶ 再生
+                      </button>
+                      <button
+                        onClick={() => deleteHistory(item.id)}
+                        className="btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: 11 }}
+                        title="この履歴を削除"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+            <button
+              onClick={clearHistory}
+              className="btn-secondary"
+              style={{ width: '100%', marginTop: 8, fontSize: 11, padding: '6px' }}
+            >
+              履歴をすべて削除
+            </button>
           </details>
+        )}
+
+        {/* 未操作時の案内 */}
+        {!started && !aiAnalysis && !aiLoading && aiHistory.length === 0 && !raceCompleted && (
+          <div className="results-placeholder">
+            左下の「ロジック」ボタンで即シミュレーション、<br />
+            上の「AI予想を取得」で Claude による分析を実行できます
+          </div>
         )}
       </div>
     </div>
