@@ -295,53 +295,30 @@ select { background: var(--surface2); color: var(--text); border: 1px solid var(
   background: linear-gradient(135deg, #10b981, #059669);
 }
 
-/* ─── 印（馬柱左端）─── */
+/* ─── 印（馬柱左端、プルダウン）─── */
 .mark-cell-td { padding: 6px 4px !important; vertical-align: middle; }
-.mark-cell {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s;
+.mark-select {
+  appearance: none;
+  -webkit-appearance: none;
   background: var(--surface2);
-  user-select: none;
-}
-.mark-cell:hover { background: var(--border); }
-.mark-symbol {
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1;
-}
-.mark-picker {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 50;
-  display: flex;
-  gap: 4px;
-  background: var(--surface);
+  color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.4);
-  margin-top: 4px;
-}
-.mark-option {
-  background: var(--surface2);
-  border: 1px solid transparent;
   border-radius: 6px;
-  width: 32px;
-  height: 32px;
-  font-size: 18px;
+  width: 48px;
+  height: 36px;
+  padding: 0 4px;
+  font-size: 20px;
   font-weight: 700;
+  text-align: center;
+  text-align-last: center;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  transition: border-color 0.15s, background 0.15s;
 }
-.mark-option:hover { background: var(--border); }
-.mark-option.selected { border-color: #FFD700; background: var(--border); }
+.mark-select:hover { border-color: var(--muted); background: var(--border); }
+.mark-select:focus { outline: none; border-color: #FFD700; }
+.mark-select option {
+  background: var(--surface);
+  color: var(--text);
+  font-size: 18px;
+  text-align: center;
+}

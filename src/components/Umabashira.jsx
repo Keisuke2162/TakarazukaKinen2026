@@ -3,13 +3,6 @@ import { getWakuStyle } from '../utils/horseUtils';
 import HorseModal from './HorseModal';
 
 const MARKS = ['-', '◎', '○', '★', '消'];
-const MARK_COLORS = {
-  '-': 'var(--muted)',
-  '◎': '#EF4444',
-  '○': '#3B82F6',
-  '★': '#FACC15',
-  '消': '#6B7280',
-};
 const STORAGE_KEY = 'takarazuka-marks';
 
 function loadMarks() {
@@ -52,38 +45,19 @@ function UmabanCircle({ horse }) {
   );
 }
 
-function MarkCell({ mark, onCycle, onPick }) {
-  // クリックで次の印に循環。長押し/右クリックで選択メニューを開く
-  const [open, setOpen] = useState(false);
-  const color = MARK_COLORS[mark] ?? 'var(--muted)';
-
+function MarkCell({ mark, onChange }) {
   return (
-    <div
-      className="mark-cell"
-      onClick={(e) => { e.stopPropagation(); onCycle(); }}
-      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
-      title="クリック: 印を切替 / 右クリック: 選択"
+    <select
+      className="mark-select"
+      value={mark}
+      onChange={(e) => onChange(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      aria-label="印を選択"
     >
-      <span className="mark-symbol" style={{ color }}>{mark}</span>
-      {open && (
-        <div className="mark-picker" onClick={(e) => e.stopPropagation()}>
-          {MARKS.map((m) => (
-            <button
-              key={m}
-              className={'mark-option' + (m === mark ? ' selected' : '')}
-              style={{ color: MARK_COLORS[m] }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onPick(m);
-                setOpen(false);
-              }}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      {MARKS.map((m) => (
+        <option key={m} value={m}>{m}</option>
+      ))}
+    </select>
   );
 }
 
@@ -102,12 +76,6 @@ export default function Umabashira({ horses }) {
       return next;
     });
   };
-  const cycleMark = (umaban) => {
-    const cur = getMark(umaban);
-    const idx = MARKS.indexOf(cur);
-    setMark(umaban, MARKS[(idx + 1) % MARKS.length]);
-  };
-
   return (
     <>
       <div className="uma-wrap">
@@ -131,8 +99,7 @@ export default function Umabashira({ horses }) {
                 <td className="mark-cell-td">
                   <MarkCell
                     mark={getMark(horse.umaban)}
-                    onCycle={() => cycleMark(horse.umaban)}
-                    onPick={(m) => setMark(horse.umaban, m)}
+                    onChange={(m) => setMark(horse.umaban, m)}
                   />
                 </td>
                 <td><WakuBox waku={horse.waku} /></td>
